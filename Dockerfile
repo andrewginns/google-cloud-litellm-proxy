@@ -26,8 +26,16 @@ EXPOSE 8080/tcp
 # Install LiteLLM proxy
 COPY requirements.txt requirements.txt
 COPY config.yaml config.yaml
-RUN pip install -r requirements.txt && \
-    pip cache purge
+
+# Install system dependencies and uv for faster package installation
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl build-essential && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:$PATH" && \
+    uv pip install --system -r requirements.txt && \
+    apt-get purge -y build-essential && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
 # Start
 ENTRYPOINT ["litellm"]
