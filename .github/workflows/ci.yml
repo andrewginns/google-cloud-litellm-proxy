@@ -6,6 +6,7 @@ on:
       - 'Dockerfile'
       - 'config.yaml'
       - 'requirements.txt'
+      - 'proxy_wrapper.py'
   pull_request:
     branches: [ "master" ]
   workflow_dispatch:
