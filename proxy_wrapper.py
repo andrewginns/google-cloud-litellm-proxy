@@ -3,13 +3,27 @@ import os
 import sys
 from arize.otel import register
 from openinference.instrumentation.litellm import LiteLLMInstrumentor
+from google.cloud import secretmanager
+
+def get_secret(secret_id):
+    """Get secret from Secret Manager with fallback to environment variable."""
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{os.getenv('GOOGLE_CLOUD_PROJECT')}/secrets/{secret_id}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        print(f"Warning: Failed to get secret {secret_id} from Secret Manager: {e}")
+        return None
 
 def setup_arize():
-    space_id = os.getenv("ARIZE_SPACE_ID")
-    api_key = os.getenv("ARIZE_API_KEY")
+    # Try Secret Manager first, then fall back to environment variables
+    space_id = get_secret("ARIZE_TEST_SPACE_ID") or os.getenv("ARIZE_TEST_SPACE_ID")
+    api_key = get_secret("ARIZE_TEST_API_KEY") or os.getenv("ARIZE_TEST_API_KEY")
 
     if not space_id or not api_key:
-        print("Warning: Arize credentials not found. Logging will be disabled.")
+        print("Arize credentials (ARIZE_TEST_SPACE_ID, ARIZE_TEST_API_KEY) not found in Secret Manager or environment.")
+        print("Arize logging will be disabled. Configure credentials in Secret Manager or set environment variables.")
         return
 
     try:

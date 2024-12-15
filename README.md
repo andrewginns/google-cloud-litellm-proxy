@@ -35,6 +35,32 @@ Authenticate your Google Cloud Account:
 gcloud auth login
 ```
 
+### Arize Authentication (Optional)
+
+Set up Arize credentials for logging. You can either:
+1. Configure in Google Cloud Secret Manager (recommended):
+   ```bash
+   # Create secrets (do this once)
+   echo "your-space-id" | gcloud secrets create ARIZE_TEST_SPACE_ID --data-file=- --replication-policy="automatic"
+   echo "your-api-key" | gcloud secrets create ARIZE_TEST_API_KEY --data-file=- --replication-policy="automatic"
+
+   # Grant access to the service account
+   gcloud secrets add-iam-policy-binding ARIZE_TEST_SPACE_ID \
+       --member="serviceAccount:litellm-proxy@${MY_PROJECT_ID}.iam.gserviceaccount.com" \
+       --role="roles/secretmanager.secretAccessor"
+   gcloud secrets add-iam-policy-binding ARIZE_TEST_API_KEY \
+       --member="serviceAccount:litellm-proxy@${MY_PROJECT_ID}.iam.gserviceaccount.com" \
+       --role="roles/secretmanager.secretAccessor"
+   ```
+
+2. Or use environment variables (fallback):
+   ```bash
+   export ARIZE_TEST_SPACE_ID="your-space-id"
+   export ARIZE_TEST_API_KEY="your-api-key"
+   ```
+
+If neither is configured, Arize logging will be disabled.
+
 ## Configuration
 
 <walkthrough-project-setup></walkthrough-project-setup>
@@ -88,6 +114,7 @@ gcloud services enable \
     cloudbuild.googleapis.com \
     containeranalysis.googleapis.com \
     containerscanning.googleapis.com \
+    secretmanager.googleapis.com \
     --project="$MY_PROJECT_ID" \
     --quiet
 ```
@@ -237,7 +264,7 @@ gcloud run deploy "litellm-proxy" \
     --execution-environment=gen1 \
     --description="LiteLLM Proxy" \
     --region="$MY_REGION" \
-    --set-env-vars="LITELLM_MODE=PRODUCTION,LITELLM_LOG=ERROR,VERTEXAI_PROJECT=${MY_PROJECT_ID},VERTEXAI_LOCATION=${MY_REGION},LITELLM_MASTER_KEY=sk-${MY_RANDOM}" \
+    --set-env-vars="LITELLM_MODE=PRODUCTION,LITELLM_LOG=ERROR,VERTEXAI_PROJECT=${MY_PROJECT_ID},VERTEXAI_LOCATION=${MY_REGION},LITELLM_MASTER_KEY=sk-${MY_RANDOM},GOOGLE_CLOUD_PROJECT=${MY_PROJECT_ID}" \
     --max-instances=1 \
     --allow-unauthenticated \
     --service-account "litellm-proxy@${MY_PROJECT_ID}.iam.gserviceaccount.com" \

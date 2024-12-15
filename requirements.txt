@@ -1,6 +1,7 @@
 google-cloud-aiplatform==1.74.0
 anthropic[vertex]==0.40.0
 litellm[proxy]==1.54.0
+google-cloud-secret-manager>=2.16.4
 arize-otel>=0.0.1
 openinference-instrumentation-litellm>=0.0.1
 opentelemetry-sdk>=1.21.0
