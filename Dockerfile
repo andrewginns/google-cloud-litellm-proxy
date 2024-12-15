@@ -23,12 +23,14 @@ ENV PYTHONUNBUFFERED="True"
 # Default HTTP port
 EXPOSE 8080/tcp
 
-# Install LiteLLM proxy
+# Install LiteLLM proxy and dependencies
 COPY requirements.txt requirements.txt
 COPY config.yaml config.yaml
+COPY proxy_wrapper.py proxy_wrapper.py
 RUN pip install -r requirements.txt && \
-    pip cache purge
+    pip cache purge && \
+    chmod +x proxy_wrapper.py
 
-# Start
-ENTRYPOINT ["litellm"]
+# Start using wrapper script
+ENTRYPOINT ["./proxy_wrapper.py"]
 CMD ["--port", "8080", "--config", "config.yaml"]
