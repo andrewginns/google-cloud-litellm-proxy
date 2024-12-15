@@ -14,6 +14,7 @@ def get_secret(secret_id):
         return response.payload.data.decode("UTF-8")
     except Exception as e:
         print(f"Warning: Failed to get secret {secret_id} from Secret Manager: {e}")
+        print(f"Note: GOOGLE_CLOUD_PROJECT environment variable is required for Secret Manager access")
         return None
 
 def setup_arize():
@@ -23,7 +24,9 @@ def setup_arize():
 
     if not space_id or not api_key:
         print("Arize credentials (ARIZE_TEST_SPACE_ID, ARIZE_TEST_API_KEY) not found in Secret Manager or environment.")
-        print("Arize logging will be disabled. Configure credentials in Secret Manager or set environment variables.")
+        print("To enable Arize logging, either:")
+        print("1. Configure credentials in Secret Manager (recommended) - requires GOOGLE_CLOUD_PROJECT")
+        print("2. Set environment variables ARIZE_TEST_SPACE_ID and ARIZE_TEST_API_KEY")
         return
 
     try:

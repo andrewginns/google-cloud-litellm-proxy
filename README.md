@@ -264,6 +264,9 @@ gcloud run deploy "litellm-proxy" \
     --execution-environment=gen1 \
     --description="LiteLLM Proxy" \
     --region="$MY_REGION" \
+    # Both VERTEXAI_PROJECT and GOOGLE_CLOUD_PROJECT are required:
+    # - VERTEXAI_PROJECT: Used for Vertex AI model integration and API access
+    # - GOOGLE_CLOUD_PROJECT: Required for Secret Manager to access Arize credentials
     --set-env-vars="LITELLM_MODE=PRODUCTION,LITELLM_LOG=ERROR,VERTEXAI_PROJECT=${MY_PROJECT_ID},VERTEXAI_LOCATION=${MY_REGION},LITELLM_MASTER_KEY=sk-${MY_RANDOM},GOOGLE_CLOUD_PROJECT=${MY_PROJECT_ID}" \
     --max-instances=1 \
     --allow-unauthenticated \
