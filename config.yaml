@@ -62,7 +62,8 @@ litellm_settings:
   callbacks: ["arize_callback.arize_callback_instance"]
 
 general_settings:
-  auth_required: false
+  master_key: "${LITELLM_MASTER_KEY}"
+  auth_required: true
   database_url: ""
   use_background_health_checks: false
-  require_api_key: false
+  require_api_key: true

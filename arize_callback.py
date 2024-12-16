@@ -1,169 +1,198 @@
-#!/usr/bin/env python3
-from litellm.integrations.custom_logger import CustomLogger
-import litellm
+import logging
+import os
+from typing import Optional, Callable
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.trace import SpanKind
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-import os
-import google.cloud.secretmanager as secretmanager
-import logging
-from litellm.proxy.proxy_server import ProxyConfig
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION, DEPLOYMENT_ENVIRONMENT
+from litellm.proxy._types import CustomLogger
+from litellm.proxy.proxy_config import ProxyConfig
 
 class ArizeCallback(CustomLogger):
     def __init__(self):
-        super().__init__()
-        # Configure proxy settings to disable authentication
-        proxy_config = ProxyConfig()
-        proxy_config.auth_required = False
-        proxy_config.require_api_key = False
-        self.setup_arize()
+        try:
+            logging.info("Setting up Arize logging...")
+            self._model_name = None  # Initialize model name
+            self.setup_arize()
+        except Exception as e:
+            logging.error(f"Failed to initialize Arize logging: {e}", exc_info=True)
 
     def setup_arize(self):
         try:
-            # Get credentials from Secret Manager
-            client = secretmanager.SecretManagerServiceClient()
-            project_id = os.getenv('GOOGLE_CLOUD_PROJECT')
+            # Configure base resource attributes
+            base_attributes = {
+                SERVICE_NAME: "litellm-proxy",
+                SERVICE_VERSION: "1.0.0",
+                DEPLOYMENT_ENVIRONMENT: "production",
+                "external.model.id": "vertex_ai_gemini_pro",  # Required by Arize
+                "model.provider": "vertex_ai",  # Required by Arize
+            }
 
-            space_id = None
-            api_key = None
+            # Create base resource
+            base_resource = Resource.create(base_attributes)
+            logging.info(f"Created base resource with attributes: {base_attributes}")
 
-            try:
-                space_id_response = client.access_secret_version(
-                    request={"name": f"projects/{project_id}/secrets/ARIZE_TEST_SPACE_ID/versions/latest"}
-                )
-                space_id = space_id_response.payload.data.decode()
-            except Exception as e:
-                logging.info(f"Using environment variable for ARIZE_TEST_SPACE_ID: {e}")
-                space_id = os.getenv('ARIZE_TEST_SPACE_ID')
+            # Configure OTLP exporter with headers
+            headers = [
+                (b"x-api-key", os.getenv("ARIZE_TEST_API_KEY", "demo").encode()),
+                (b"space-id", os.getenv("ARIZE_TEST_SPACE_ID", "demo").encode()),
+            ]
+            logging.info(f"Using OTLP headers: {headers}")
 
-            try:
-                api_key_response = client.access_secret_version(
-                    request={"name": f"projects/{project_id}/secrets/ARIZE_TEST_API_KEY/versions/latest"}
-                )
-                api_key = api_key_response.payload.data.decode()
-            except Exception as e:
-                logging.info(f"Using environment variable for ARIZE_TEST_API_KEY: {e}")
-                api_key = os.getenv('ARIZE_TEST_API_KEY')
+            otlp_exporter = OTLPSpanExporter(
+                endpoint="otlp.arize.com:443",
+                insecure=False,
+                headers=headers,
+            )
 
-            # Initialize Arize OpenTelemetry
-            logging.info(f"Initializing Arize OpenTelemetry with endpoint=https://otlp.arize.com:443")
-            trace.set_tracer_provider(TracerProvider())
-
-            # Configure detailed export logging
+            # Create and register LoggingSpanProcessor for debugging
             class LoggingSpanProcessor(BatchSpanProcessor):
                 def _export(self, spans):
                     try:
-                        logging.info(f"Exporting {len(spans)} spans to Arize")
-                        result = super()._export(spans)
-                        logging.info("Successfully exported spans to Arize")
-                        return result
+                        for span in spans:
+                            # Log the resource attributes
+                            resource_attrs = span.resource.attributes if span.resource else {}
+                            logging.info(f"Span resource attributes: {resource_attrs}")
+                            # Log the span attributes
+                            logging.info(f"Span attributes: {span.attributes}")
+                            logging.info(f"Exporting span: {span.name}")
+                        return super()._export(spans)
                     except Exception as e:
-                        logging.error(f"Failed to export spans to Arize: {e}", exc_info=True)
+                        logging.error(f"Error exporting spans: {e}", exc_info=True)
                         return False
 
-            processor = LoggingSpanProcessor(
-                OTLPSpanExporter(
-                    endpoint="https://otlp.arize.com:443",
-                    headers={
-                        "space_id": space_id,
-                        "api_key": api_key,
-                        "Content-Type": "application/json",
-                    },
-                    insecure=False,
-                )
-            )
-            trace.get_tracer_provider().add_span_processor(processor)
+            # Initialize tracer provider with base resource
+            provider = TracerProvider(resource=base_resource)
+
+            # Add processors to provider
+            provider.add_span_processor(LoggingSpanProcessor(otlp_exporter))
+
+            # Set global tracer provider
+            trace.set_tracer_provider(provider)
+
+            # Get tracer
+            self.tracer = trace.get_tracer(__name__)
+
+            # Initialize HTTPX instrumentation
             HTTPXClientInstrumentor().instrument()
-            logging.info(f"Arize OpenTelemetry initialized successfully with space_id={space_id}")
-        except Exception as e:
-            logging.error(f"Failed to initialize Arize logging in callback: {e}", exc_info=True)
 
-    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+            logging.info("Successfully set up Arize logging with OpenTelemetry")
+        except Exception as e:
+            logging.error(f"Error in setup_arize: {e}", exc_info=True)
+            raise
+
+    async def async_log_success_event(
+        self,
+        kwargs: dict,
+        response_obj: dict,
+        start_time: float,
+        end_time: float,
+        print_verbose: Optional[Callable] = None,
+    ):
         try:
-            model = kwargs.get("model")
+            # Extract model information
+            model = kwargs.get("model", "")
             messages = kwargs.get("messages", [])
-            user = kwargs.get("user")
-            litellm_params = kwargs.get("litellm_params", {})
-            metadata = litellm_params.get("metadata", {})
 
-            # Extract Vertex AI specific fields
-            content = response_obj.get("content", [])
-            usage = response_obj.get("usage", {})
-            response_id = response_obj.get("id", "")
+            # Create span with required attributes
+            with self.tracer.start_as_current_span(
+                name="litellm.completion.success",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "external.model.id": "vertex_ai_gemini_pro",
+                    "model.provider": "vertex_ai",
+                    "model": model,
+                    "messages": str(messages),
+                    "response": str(response_obj),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_ms": (end_time - start_time) * 1000,
+                }
+            ) as span:
+                # Log span creation
+                logging.info(f"Created success span with attributes: {span.attributes}")
 
-            # Map response fields
-            input_text = " ".join([msg.get("content", "") if isinstance(msg.get("content"), str)
-                                 else msg.get("content", [{}])[0].get("text", "") for msg in messages])
-            output_text = " ".join([c.get("text", "") for c in content if c.get("type") == "text"])
+                # Add response-specific attributes
+                if hasattr(response_obj, "choices") and len(response_obj.choices) > 0:
+                    choice = response_obj.choices[0]
+                    if hasattr(choice, "message"):
+                        span.set_attribute("response_message", str(choice.message))
+                    if hasattr(choice, "finish_reason"):
+                        span.set_attribute("finish_reason", choice.finish_reason)
 
-            # Log with detailed information
-            logging.info(f"Logging completion to Arize - Model: {model}, ID: {response_id}, User: {user}")
-            logging.info(f"Usage stats - Input tokens: {usage.get('input_tokens')}, Output tokens: {usage.get('output_tokens')}")
+                # Add usage information if available
+                if hasattr(response_obj, "usage"):
+                    usage = response_obj.usage
+                    span.set_attribute("prompt_tokens", getattr(usage, "prompt_tokens", 0))
+                    span.set_attribute("completion_tokens", getattr(usage, "completion_tokens", 0))
+                    span.set_attribute("total_tokens", getattr(usage, "total_tokens", 0))
 
-            # Create trace for Arize
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("llm_completion") as span:
-                # Map model name to external_model_id format
-                external_model_id = f"vertex_ai_{model.replace('/', '_').replace('-', '_')}"
-                span.set_attribute("external_model_id", external_model_id)
-                span.set_attribute("model", model)
-                span.set_attribute("user", user)
-                span.set_attribute("response_id", response_id)
-                span.set_attribute("input_text", input_text)
-                span.set_attribute("output_text", output_text)
-                span.set_attribute("input_tokens", usage.get("input_tokens"))
-                span.set_attribute("output_tokens", usage.get("output_tokens"))
-                span.set_attribute("provider", "vertex_ai")
+                # Add any safety results if available
+                if hasattr(response_obj, "vertex_ai_safety_results"):
+                    span.set_attribute("safety_results", str(response_obj.vertex_ai_safety_results))
 
-                # Add any additional metadata
-                for key, value in metadata.items():
-                    if isinstance(value, (str, int, float, bool)):
-                        span.set_attribute(f"metadata_{key}", value)
+                logging.info("Successfully logged completion event to Arize")
+
         except Exception as e:
-            logging.error(f"Failed to log success event to Arize: {e}", exc_info=True)
+            logging.error(f"Error in async_log_success_event: {e}", exc_info=True)
+            # Don't raise the exception to avoid affecting the main request flow
+            pass
 
-    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+    async def async_log_failure_event(self,
+                                    kwargs,
+                                    error,
+                                    start_time,
+                                    end_time,
+                                    print_verbose):
         try:
-            model = kwargs.get("model")
-            messages = kwargs.get("messages", [])
-            user = kwargs.get("user")
-            exception_event = kwargs.get("exception")
-
-            # Create trace for failed request
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("llm_completion_failure") as span:
-                external_model_id = f"vertex_ai_{model.replace('/', '_').replace('-', '_')}"
-                span.set_attribute("external_model_id", external_model_id)
-                span.set_attribute("model", model)
-                span.set_attribute("user", user)
-                span.set_attribute("error", str(exception_event))
-                span.set_attribute("provider", "vertex_ai")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(exception_event)))
-
-            logging.error(f"Logged failed completion to Arize - Model: {model}, User: {user}, Error: {exception_event}", exc_info=True)
+            # Create span for failure event
+            with self.tracer.start_as_current_span(
+                name="litellm.completion.failure",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "external.model.id": "vertex_ai_gemini_pro",
+                    "model.provider": "vertex_ai",
+                    "model": kwargs.get("model", ""),
+                    "error": str(error),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_ms": (end_time - start_time) * 1000,
+                }
+            ) as span:
+                logging.info(f"Created failure span with attributes: {span.attributes}")
+                logging.info("Successfully logged failure event to Arize")
         except Exception as e:
-            logging.error(f"Failed to log failure event to Arize: {e}", exc_info=True)
+            logging.error(f"Error in async_log_failure_event: {e}", exc_info=True)
+            pass
 
-    def log_stream_event(self, kwargs, response_obj, start_time, end_time):
+    def log_stream_event(self,
+                        kwargs,
+                        response_obj,
+                        start_time,
+                        end_time,
+                        print_verbose):
         try:
-            model = kwargs.get("model")
-            messages = kwargs.get("messages", [])
-            user = kwargs.get("user")
-
-            # Create trace for stream event
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("llm_completion_stream") as span:
-                external_model_id = f"vertex_ai_{model.replace('/', '_').replace('-', '_')}"
-                span.set_attribute("external_model_id", external_model_id)
-                span.set_attribute("model", model)
-                span.set_attribute("user", user)
-                span.set_attribute("provider", "vertex_ai")
-                span.set_attribute("event_type", "stream")
-
-            logging.info(f"Logged stream event to Arize - Model: {model}, User: {user}")
+            # Create span for stream event
+            with self.tracer.start_as_current_span(
+                name="litellm.completion.stream",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "external.model.id": "vertex_ai_gemini_pro",
+                    "model.provider": "vertex_ai",
+                    "model": kwargs.get("model", ""),
+                    "response": str(response_obj),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_ms": (end_time - start_time) * 1000,
+                }
+            ) as span:
+                logging.info(f"Created stream span with attributes: {span.attributes}")
+                logging.info("Successfully logged stream event to Arize")
         except Exception as e:
-            logging.error(f"Failed to log stream event to Arize: {e}", exc_info=True)
+            logging.error(f"Error in log_stream_event: {e}", exc_info=True)
+            pass
 
 arize_callback_instance = ArizeCallback()
