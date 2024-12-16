@@ -1,16 +1,45 @@
 #!/usr/bin/env python3
-from litellm.proxy.proxy_server import ProxyConfig, main
+from litellm import completion
+from litellm.callbacks.base_callback import BaseCallback
+from fastapi import FastAPI, Request
+from typing import Optional, List, Dict, Any
 import asyncio
 import os
+import yaml
+import sys
+from arize_callback import arize_callback_instance
 
-# Set environment variables for authentication
-os.environ["LITELLM_AUTH_REQUIRED"] = "false"
-os.environ["LITELLM_REQUIRE_API_KEY"] = "false"
+# Create FastAPI app
+app = FastAPI()
 
-async def start_proxy():
-    config = ProxyConfig()
-    config.config_file_path = "./config.yaml"
-    await main(config=config)
+# Load config
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+# Initialize LiteLLM with callbacks
+from litellm import LiteLLM
+LiteLLM.callbacks = [arize_callback_instance]
+LiteLLM.set_verbose = True
+
+@app.post("/chat/completions")
+async def chat_completion(request: Request):
+    try:
+        body = await request.json()
+        model = body.get("model", "vertex_ai/mistral-large@2407")
+        messages = body.get("messages", [])
+
+        # Call LiteLLM directly with callback
+        response = await completion(
+            model=model,
+            messages=messages,
+            api_base="",  # Use default Vertex AI endpoint
+            timeout=15
+        )
+        return response
+    except Exception as e:
+        print(f"Error in chat completion: {str(e)}", file=sys.stderr)
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(start_proxy())
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
