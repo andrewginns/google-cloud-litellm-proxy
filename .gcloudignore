@@ -3,3 +3,4 @@
 !Dockerfile
 !requirements.txt
 !proxy_wrapper.py
+!arize_callback.py

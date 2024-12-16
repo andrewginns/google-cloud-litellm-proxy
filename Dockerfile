@@ -26,12 +26,10 @@ EXPOSE 8080/tcp
 # Install LiteLLM proxy and dependencies
 COPY requirements.txt requirements.txt
 COPY config.yaml config.yaml
-COPY proxy_wrapper.py proxy_wrapper.py
 COPY arize_callback.py arize_callback.py
 RUN pip install -r requirements.txt && \
-    pip cache purge && \
-    chmod +x proxy_wrapper.py
+    pip cache purge
 
-# Start using wrapper script
-ENTRYPOINT ["./proxy_wrapper.py"]
+# Start LiteLLM proxy server
+ENTRYPOINT ["litellm"]
 CMD ["--port", "8080", "--config", "config.yaml"]
