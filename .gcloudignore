@@ -2,5 +2,5 @@
 !config.yaml
 !Dockerfile
 !requirements.txt
-!proxy_wrapper.py
+!proxy_server.py
 !arize_callback.py
