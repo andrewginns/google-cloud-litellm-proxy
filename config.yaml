@@ -60,3 +60,9 @@ litellm_settings:
   num_retries: 3
   request_timeout: 15
   callbacks: ["arize_callback.arize_callback_instance"]
+
+general_settings:
+  auth_required: false
+  database_url: ""
+  use_background_health_checks: false
+  require_api_key: false
