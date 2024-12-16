@@ -23,12 +23,14 @@ ENV PYTHONUNBUFFERED="True"
 # Default HTTP port
 EXPOSE 8080/tcp
 
-# Install LiteLLM proxy
+# Install LiteLLM proxy and dependencies
 COPY requirements.txt requirements.txt
 COPY config.yaml config.yaml
+COPY arize_callback.py arize_callback.py
+COPY proxy_server.py proxy_server.py
 RUN pip install -r requirements.txt && \
     pip cache purge
 
-# Start
-ENTRYPOINT ["litellm"]
-CMD ["--port", "8080", "--config", "config.yaml"]
+# Start custom proxy server
+ENTRYPOINT ["python"]
+CMD ["proxy_server.py"]
