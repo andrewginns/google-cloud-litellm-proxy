@@ -27,6 +27,7 @@ EXPOSE 8080/tcp
 COPY requirements.txt requirements.txt
 COPY config.yaml config.yaml
 COPY proxy_wrapper.py proxy_wrapper.py
+COPY arize_callback.py arize_callback.py
 RUN pip install -r requirements.txt && \
     pip cache purge && \
     chmod +x proxy_wrapper.py
