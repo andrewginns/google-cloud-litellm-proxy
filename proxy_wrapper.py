@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 import os
 import sys
+import logging
 from arize.otel import register
 from openinference.instrumentation.litellm import LiteLLMInstrumentor
 from google.cloud import secretmanager
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def get_secret(secret_id):
     """Get secret from Secret Manager with fallback to environment variable."""
@@ -13,38 +18,47 @@ def get_secret(secret_id):
         response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8")
     except Exception as e:
-        print(f"Warning: Failed to get secret {secret_id} from Secret Manager: {e}")
-        print(f"Note: GOOGLE_CLOUD_PROJECT environment variable is required for Secret Manager access")
+        logger.error(f"Failed to get secret {secret_id} from Secret Manager: {e}")
+        logger.info("Note: GOOGLE_CLOUD_PROJECT environment variable is required for Secret Manager access")
         return None
 
 def setup_arize():
+    logger.info("Starting Arize setup...")
+
     # Try Secret Manager first, then fall back to environment variables
     space_id = get_secret("ARIZE_TEST_SPACE_ID") or os.getenv("ARIZE_TEST_SPACE_ID")
     api_key = get_secret("ARIZE_TEST_API_KEY") or os.getenv("ARIZE_TEST_API_KEY")
 
     if not space_id or not api_key:
-        print("Arize credentials (ARIZE_TEST_SPACE_ID, ARIZE_TEST_API_KEY) not found in Secret Manager or environment.")
-        print("To enable Arize logging, either:")
-        print("1. Configure credentials in Secret Manager (recommended) - requires GOOGLE_CLOUD_PROJECT")
-        print("2. Set environment variables ARIZE_TEST_SPACE_ID and ARIZE_TEST_API_KEY")
-        return
+        logger.error("Arize credentials not found in Secret Manager or environment")
+        logger.info("To enable Arize logging, either:")
+        logger.info("1. Configure credentials in Secret Manager (recommended) - requires GOOGLE_CLOUD_PROJECT")
+        logger.info("2. Set environment variables ARIZE_TEST_SPACE_ID and ARIZE_TEST_API_KEY")
+        return False
 
     try:
+        logger.info("Initializing Arize tracer provider...")
         tracer_provider = register(
             space_id=space_id,
             api_key=api_key,
-            project_name="litellm-proxy",
+            project_name="litellm-tracing",  # Match example project name
         )
+        logger.info("Instrumenting LiteLLM...")
         LiteLLMInstrumentor().instrument(tracer_provider=tracer_provider)
-        print("Arize logging initialized successfully")
+        logger.info("Arize logging initialized successfully")
+        return True
     except Exception as e:
-        print(f"Warning: Failed to initialize Arize logging: {e}")
+        logger.error(f"Failed to initialize Arize logging: {e}")
+        return False
 
 def main():
-    setup_arize()
+    if not setup_arize():
+        logger.warning("Continuing without Arize logging")
 
-    # Call litellm with all original arguments
-    os.execvp("litellm", ["litellm"] + sys.argv[1:])
+    logger.info("Starting LiteLLM proxy...")
+    # Use subprocess.run instead of execvp to maintain instrumentation
+    import subprocess
+    subprocess.run(["litellm"] + sys.argv[1:])
 
 if __name__ == "__main__":
     main()

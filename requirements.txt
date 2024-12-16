@@ -8,3 +8,4 @@ opentelemetry-sdk>=1.21.0
 opentelemetry-exporter-otlp>=1.21.0
 opentelemetry-instrumentation-httpx==0.50b0
 httpx<0.28
+python-json-logger>=2.0.0
